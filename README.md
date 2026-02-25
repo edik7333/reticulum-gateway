@@ -1,6 +1,6 @@
 # Reticulum Gateway
 
-A production-grade generic TCP tunnel that bridges Reticulum to the internet. Routes **any protocol** through Reticulum with full bidirectional streaming, featuring enterprise-level security and monitoring.
+A generic TCP tunnel that bridges Reticulum to the internet. Routes **any protocol** through Reticulum with full bidirectional streaming.
 
 ## What It Does
 
@@ -65,19 +65,14 @@ Then relays all subsequent data bidirectionally.
 
 ## Features
 
-### Core Tunnel Features
 - ✅ Generic protocol support (not HTTP-specific)
 - ✅ Full bidirectional streaming via RNS.Buffer
 - ✅ Multiple concurrent clients
 - ✅ Automatic path discovery
 - ✅ Persistent identity
-
-### Security & Monitoring
-- ✅ Rate limiting (global, per-user, per-connection)
+- ✅ Rate limiting
 - ✅ Rules engine with whitelist/blacklist
-- ✅ Audit logging (security events)
-- ✅ DDoS protection
-- ✅ Role-based access control (RBAC)
+- ✅ Audit logging
 - ✅ Bandwidth monitoring
 
 ## Limitations
@@ -87,7 +82,7 @@ Then relays all subsequent data bidirectionally.
 
 ## Configuration
 
-The gateway is configured via `config.yaml` with support for:
+Configure the gateway via `config.yaml`:
 
 ```bash
 # Run with default config.yaml
@@ -102,14 +97,6 @@ python gateway.py --identity ~/.reticulum/gateway_id
 # View help
 python gateway.py --help
 ```
-
-### Configuration Features
-
-- **Rate Limiting** - Set global and per-user request limits
-- **Rules Engine** - Define whitelist/blacklist rules for destinations
-- **Audit Logging** - Log security events to `gateway_audit.log`
-- **Authentication** - Support for multiple auth methods
-- **Role-based Access Control** - User-specific tunnel rules
 
 ## Use Cases
 
