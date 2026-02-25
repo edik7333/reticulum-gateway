@@ -239,6 +239,109 @@ class AuditLogger:
         log.info(f"AUDIT: {event_type} - {user} - {message}")
 
 
+class WebProxyFilter:
+    """
+    Intercepts HTTP responses and strips them to clean Markdown for low-bandwidth clients.
+    Removes login forms, nav elements, and other non-content elements.
+    """
+
+    def __init__(self, config: ConfigManager):
+        """Initialize web proxy filter."""
+        self.config = config
+        self.output_format = config.get("web_proxy.output_format", "markdown")
+        self.max_bytes = config.get("web_proxy.max_response_bytes", 131072)
+        self.include_links = config.get("web_proxy.include_links", True)
+        self.resolve_relative = config.get("web_proxy.resolve_relative_links", True)
+
+    def should_intercept(self, host: str, port: int) -> bool:
+        """Check if this request should be intercepted and processed."""
+        if not self.config.get("web_proxy.enabled", False):
+            return False
+        intercept_ports = self.config.get("web_proxy.intercept_ports", [80, 8080])
+        return port in intercept_ports
+
+    def strip_html(self, html_bytes: bytes, base_url: str = "") -> bytes:
+        """Strip HTML down to Markdown with text and links."""
+        try:
+            from bs4 import BeautifulSoup
+            from urllib.parse import urljoin
+        except ImportError:
+            log.warning("beautifulsoup4 not installed, returning raw HTML")
+            return html_bytes
+
+        try:
+            # Parse HTML (limit to max_bytes)
+            soup = BeautifulSoup(html_bytes[:self.max_bytes], "html.parser")
+
+            # Remove non-content elements
+            for tag in soup(["script", "style", "img", "svg", "nav", "footer",
+                            "header", "iframe", "form", "button", "noscript",
+                            "meta", "link", "input", "select", "textarea"]):
+                tag.decompose()
+
+            # Remove elements with login/register in class or id
+            for tag in soup.find_all(True):
+                class_str = " ".join(tag.get("class", []))
+                id_str = tag.get("id", "")
+                if any(x in class_str.lower() or x in id_str.lower()
+                       for x in ["login", "register", "signup", "signin"]):
+                    tag.decompose()
+
+            # Extract text
+            text = soup.get_text(separator="\n")
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            output = "\n".join(lines)
+
+            # Extract and append links
+            if self.include_links:
+                links = []
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    if self.resolve_relative and base_url and not href.startswith("http"):
+                        href = urljoin(base_url, href)
+                    link_text = a.get_text(strip=True) or href
+                    if link_text and href:
+                        links.append(f"[{link_text}] {href}")
+
+                if links:
+                    output += "\n\n--- LINKS ---\n" + "\n".join(links[:50])  # Limit to 50 links
+
+            return output.encode("utf-8", errors="replace")
+
+        except Exception as e:
+            log.warning(f"WebProxyFilter: HTML stripping failed: {e}")
+            return html_bytes
+
+    def process_http_response(self, raw_response: bytes, base_url: str = "") -> bytes:
+        """
+        Process a complete HTTP response: strip HTML, rebuild response.
+        """
+        # Split headers from body on double CRLF
+        sep = b"\r\n\r\n"
+        if sep not in raw_response:
+            return raw_response
+
+        header_block, body = raw_response.split(sep, 1)
+        headers = header_block.decode("utf-8", errors="replace")
+
+        # Only process text/html content types
+        if "text/html" not in headers.lower():
+            return raw_response
+
+        # Strip HTML to Markdown
+        stripped_body = self.strip_html(body, base_url)
+
+        # Rebuild minimal HTTP response
+        new_headers = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain; charset=utf-8\r\n"
+            f"Content-Length: {len(stripped_body)}\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+        )
+        return new_headers.encode() + stripped_body
+
+
 class ReticulumGateway:
     """
     Production-grade Reticulum Gateway with security features.
@@ -261,6 +364,7 @@ class ReticulumGateway:
         self.rate_limiter = RateLimiter(self.config)
         self.rules_engine = RulesEngine(self.config)
         self.audit_logger = AuditLogger(self.config)
+        self.web_proxy_filter = WebProxyFilter(self.config)
 
         # Gateway state
         self.identity = None
@@ -327,7 +431,10 @@ class ReticulumGateway:
                 "user": None,
                 "request_buffer": b"",
                 "connected": False,
-                "start_time": time.time()
+                "start_time": time.time(),
+                "proxy_mode": False,
+                "response_buffer": b"",
+                "request_url": ""
             }
 
             buffer = RNS.Buffer.create_bidirectional_buffer(
@@ -354,6 +461,15 @@ class ReticulumGateway:
             # If TCP connected, relay directly
             if state["tcp_socket"]:
                 try:
+                    # In proxy mode, capture the request URL from HTTP request line
+                    if state.get("proxy_mode") and not state.get("request_url"):
+                        first = data.split(b"\r\n")[0].decode("utf-8", errors="ignore")
+                        parts = first.split()
+                        if len(parts) >= 2:
+                            path = parts[1]
+                            state["request_url"] = f"http://{state['dest_host']}{path}"
+                            log.debug(f"Captured request URL: {state['request_url']}")
+
                     state["tcp_socket"].sendall(data)
                 except Exception as e:
                     log.error(f"Error forwarding to TCP: {e}")
@@ -424,6 +540,11 @@ class ReticulumGateway:
             state["dest_port"] = port
             state["connected"] = True
 
+            # Check if web proxy mode should be activated
+            if self.web_proxy_filter.should_intercept(hostname, port):
+                state["proxy_mode"] = True
+                log.info(f"Web proxy mode active for {hostname}:{port}")
+
             state["buf"].write(b"OK\r\n")
             state["buf"].flush()
 
@@ -448,15 +569,21 @@ class ReticulumGateway:
             self.audit_logger.log_event("tunnel_error", state["user"], f"Failed to open tunnel: {e}")
 
     def _tcp_to_rns(self, tcp_socket, state):
-        """Relay data from TCP back to RNS."""
+        """Relay data from TCP back to RNS, optionally filtering through web proxy."""
         try:
             while state["tcp_socket"]:
                 try:
                     data = tcp_socket.recv(16384)
                     if not data:
                         break
-                    state["buf"].write(data)
-                    state["buf"].flush()
+
+                    # In proxy mode, buffer the response; otherwise relay directly
+                    if state.get("proxy_mode"):
+                        state["response_buffer"] += data
+                    else:
+                        state["buf"].write(data)
+                        state["buf"].flush()
+
                 except socket.timeout:
                     continue
                 except Exception as e:
@@ -468,6 +595,22 @@ class ReticulumGateway:
             except:
                 pass
             state["tcp_socket"] = None
+
+            # If in proxy mode, process and send the buffered response
+            if state.get("proxy_mode") and state.get("response_buffer"):
+                try:
+                    filtered = self.web_proxy_filter.process_http_response(
+                        state["response_buffer"],
+                        base_url=state.get("request_url", "")
+                    )
+                    state["buf"].write(filtered)
+                    state["buf"].flush()
+                    log.info(f"Web proxy: filtered response ({len(state['response_buffer'])} → {len(filtered)} bytes)")
+                except Exception as e:
+                    log.error(f"Error filtering web proxy response: {e}")
+                    # Fallback: send raw response if filtering fails
+                    state["buf"].write(state["response_buffer"])
+                    state["buf"].flush()
 
             # Log tunnel closed
             duration = time.time() - state["start_time"]

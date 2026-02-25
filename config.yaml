@@ -178,6 +178,26 @@ audit:
   retention_days: 30
   max_file_size_mb: 100
 
+# Web Proxy (optional feature)
+# Intercepts HTTP responses and strips them to clean Markdown for low-bandwidth clients
+web_proxy:
+  enabled: false
+
+  # Ports to intercept HTTP traffic on
+  intercept_ports: [80, 8080]
+
+  # Output format for stripped content
+  output_format: "markdown"  # markdown | text | links_only
+
+  # Max response size to buffer and process (bytes)
+  max_response_bytes: 131072  # 128 KB
+
+  # Include hyperlinks in output
+  include_links: true
+
+  # Resolve relative links to absolute URLs
+  resolve_relative_links: true
+
 # Service announcement
 service:
   # Reticulum service aspects
