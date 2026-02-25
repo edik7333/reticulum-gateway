@@ -1,0 +1,199 @@
+# Reticulum Gateway Configuration
+# Complete configuration for auth, rate limiting, rules, and access control
+
+gateway:
+  # Identity management
+  identity_path: "gateway_identity"
+
+  # Logging
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  audit_log: true
+  audit_log_file: "gateway_audit.log"
+
+# Authentication settings
+auth:
+  # Enable/disable authentication
+  enabled: true
+
+  # Authentication method: "password", "api_key", "reticulum_identity", or "none"
+  method: "password"
+
+  # Users (when using password auth)
+  users:
+    admin:
+      password_hash: "$2b$12$..."  # bcrypt hash
+      roles: ["admin"]
+      permissions: ["tunnel:*", "manage:*"]
+
+    user1:
+      password_hash: "$2b$12$..."
+      roles: ["user"]
+      permissions: ["tunnel:*"]
+
+    restricted:
+      password_hash: "$2b$12$..."
+      roles: ["limited"]
+      permissions: ["tunnel:http", "tunnel:https"]
+
+  # API keys (alternative to password)
+  api_keys:
+    key_admin_123:
+      user: "admin"
+      roles: ["admin"]
+    key_user_456:
+      user: "user1"
+      roles: ["user"]
+
+  # Session settings
+  session_timeout: 3600  # seconds
+  max_failed_attempts: 5
+  lockout_duration: 900  # 15 minutes
+
+# Rate limiting
+rate_limit:
+  enabled: true
+
+  # Global limits
+  global_requests_per_second: 1000
+  global_requests_per_minute: 0  # 0 = unlimited
+  global_requests_per_hour: 0
+
+  # Per-user limits
+  per_user_requests_per_second: 100
+  per_user_requests_per_minute: 6000
+  per_user_requests_per_hour: 360000
+
+  # Per-connection limits
+  per_connection_bandwidth_mbps: 100
+  per_connection_timeout: 3600  # seconds
+
+  # Burst handling
+  burst_multiplier: 1.5  # Allow 150% of rate for short bursts
+
+# DDoS Protection
+ddos_protection:
+  enabled: true
+
+  # Detect anomalies
+  connection_spike_threshold: 50  # connections in 10 seconds
+  bandwidth_spike_threshold: 1000  # MB in 10 seconds
+
+  # Auto-blocking
+  auto_block_on_violation: false
+  block_duration: 600  # seconds
+
+# Rules Engine
+rules:
+  enabled: true
+
+  # Allowed destinations
+  whitelist_destinations:
+    # - "example.com:*"
+    # - "*:443"
+    # - "*:*"  # Allow all (default if no rules)
+
+  # Blocked destinations
+  blacklist_destinations:
+    # - "malicious.com:*"
+    # - "*:1234"
+
+  # Per-user routing rules
+  user_rules:
+    admin:
+      - destination: "*:*"
+        action: "allow"
+
+    user1:
+      - destination: "*.example.com:443"
+        action: "allow"
+      - destination: "*.example.com:80"
+        action: "allow"
+      - destination: "*:*"
+        action: "deny"
+
+    restricted:
+      - destination: "*.google.com:443"
+        action: "allow"
+      - destination: "*.google.com:80"
+        action: "allow"
+      - destination: "*:*"
+        action: "deny"
+
+# Access Control (RBAC)
+roles:
+  admin:
+    description: "Full access"
+    permissions:
+      - "tunnel:*"
+      - "manage:*"
+      - "config:*"
+
+  user:
+    description: "Normal user - full tunnel access"
+    permissions:
+      - "tunnel:*"
+
+  limited:
+    description: "Limited - HTTP/HTTPS only"
+    permissions:
+      - "tunnel:http"
+      - "tunnel:https"
+
+  dns:
+    description: "DNS only"
+    permissions:
+      - "tunnel:dns"
+
+# Permissions
+permissions:
+  "tunnel:*": "Access any tunnel"
+  "tunnel:http": "Access HTTP (port 80)"
+  "tunnel:https": "Access HTTPS (port 443)"
+  "tunnel:ssh": "Access SSH (port 22)"
+  "tunnel:dns": "Access DNS (port 53)"
+  "manage:*": "Manage gateway"
+  "config:*": "Modify configuration"
+
+# Connection pooling
+connection_pool:
+  enabled: true
+  max_connections_per_user: 10
+  max_total_connections: 1000
+  idle_timeout: 300  # Close idle connections after 5 minutes
+
+# Audit logging
+audit:
+  enabled: true
+  log_file: "gateway_audit.log"
+  log_events:
+    - "auth_success"
+    - "auth_failure"
+    - "connection_opened"
+    - "connection_closed"
+    - "rate_limit_exceeded"
+    - "permission_denied"
+    - "rule_violated"
+
+  # Retention
+  retention_days: 30
+  max_file_size_mb: 100
+
+# Service announcement
+service:
+  # Reticulum service aspects
+  aspect_1: "exit"
+  aspect_2: "gateway"
+
+  # Announce interval
+  announce_interval: 600  # seconds
+
+# Advanced
+advanced:
+  # Enable/disable features
+  connection_tracking: true
+  bandwidth_monitoring: true
+  anomaly_detection: true
+
+  # Cleanup
+  cleanup_interval: 300  # seconds
+  connection_timeout: 3600  # seconds
